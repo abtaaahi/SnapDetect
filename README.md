@@ -1,4 +1,3 @@
-
 # SnapDetect - an object recognition app through image.
 
 Developed an object recognition application for Android using TensorFlow Lite and MobileNet V3 model to 
@@ -6,16 +5,17 @@ identify objects through images used Retrofit for fetch data.
 
 A real-time object recognition feature, enhancing user interaction and engagement.
 
+## Demo Video
 
+[![SnapDetect Demo Video](https://img.youtube.com/vi/v7t7c2WBi1M/hqdefault.jpg)](https://youtube.com/shorts/v7t7c2WBi1M?si=sbQ9ZKE5gLNt20Wt)
+
+
+## API Reference
 References:
-
 
 Model: MobileNet V3 ( https://shorturl.at/VEnYT )
 
 API: Knowledge Graph Search ( https://shorturl.at/Jlbb1 )
-
-## API Reference
-
 #### Dependencies 
 
 ```
