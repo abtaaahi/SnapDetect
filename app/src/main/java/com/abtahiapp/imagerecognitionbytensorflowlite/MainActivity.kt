@@ -22,9 +22,18 @@ import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import android.provider.MediaStore
 import android.util.Log
+import android.view.View
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.Toast
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.cardview.widget.CardView
+import androidx.core.content.ContextCompat
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -33,6 +42,7 @@ import java.util.Locale
 import androidx.core.content.FileProvider
 import com.bumptech.glide.Glide
 import com.bumptech.glide.request.target.CustomTarget
+import com.google.common.util.concurrent.ListenableFuture
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
@@ -46,6 +56,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var selectImageButton: ImageButton
     private lateinit var captureImageButton: ImageButton
     private lateinit var shareButton: ImageButton
+    private lateinit var layoutCameraView: CardView
     private lateinit var resultTextView: TextView
     private lateinit var detailTextView: TextView
     private lateinit var tflite: Interpreter
@@ -53,9 +64,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var currentPhotoPath: String
     private lateinit var imageUrlEditText: EditText
     private lateinit var recognizeFromUrlButton: ImageButton
-
+    private lateinit var previewView: PreviewView
+    private lateinit var cameraProviderFuture: ListenableFuture<ProcessCameraProvider>
+    private lateinit var imageCapture: ImageCapture
     private lateinit var knowledgeGraphApiService: KnowledgeGraphApiService
-    private val apiKey = "AIzaSyCzj1qH-zt3qrZrUr64SrITx6NdMcTNCk4"
+    private val apiKey = Secret.APIKEY
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,7 +95,14 @@ class MainActivity : AppCompatActivity() {
         shareButton = findViewById(R.id.shareButton)
         imageUrlEditText = findViewById(R.id.imageUrlEditText)
         recognizeFromUrlButton = findViewById(R.id.recognizeFromUrlButton)
+        previewView = findViewById(R.id.cameraView)
+        layoutCameraView = findViewById(R.id.layoutCameraView)
 
+        cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+        cameraProviderFuture.addListener({
+            val cameraProvider = cameraProviderFuture.get()
+            startCamera(cameraProvider)
+        }, ContextCompat.getMainExecutor(this))
 
         recognizeFromUrlButton.setOnLongClickListener {
             Toast.makeText(this, "Recognize from URL", Toast.LENGTH_SHORT).show()
@@ -110,27 +130,47 @@ class MainActivity : AppCompatActivity() {
         }
 
         captureImageButton.setOnClickListener {
-            val takePictureIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-            if (takePictureIntent.resolveActivity(packageManager) != null) {
+            if (imageView.visibility == View.VISIBLE) {
+                imageView.visibility = View.GONE
+                layoutCameraView.visibility = View.VISIBLE
+                startCamera(cameraProviderFuture.get())
+            } else {
                 val photoFile: File? = try {
                     createImageFile()
                 } catch (ex: IOException) {
                     Log.e(TAG, "Error creating photo file: ${ex.message}")
                     null
                 }
-                photoFile?.also {
-                    val photoURI: Uri = FileProvider.getUriForFile(
-                        this,
-                        "${applicationContext.packageName}.fileprovider",
-                        it
+
+                photoFile?.let {
+                    val outputOptions = ImageCapture.OutputFileOptions.Builder(it).build()
+
+                    imageCapture.takePicture(
+                        outputOptions,
+                        ContextCompat.getMainExecutor(this),
+                        object : ImageCapture.OnImageSavedCallback {
+                            override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                                val bitmap = BitmapFactory.decodeFile(it.absolutePath)
+                                imageView.setImageBitmap(bitmap)
+
+                                imageView.visibility = View.VISIBLE
+                                layoutCameraView.visibility = View.GONE
+
+                                val result = recognizeImage(bitmap)
+                                resultTextView.text = result
+                                fetchEntityDetails(result)
+                            }
+
+                            override fun onError(exception: ImageCaptureException) {
+                                Log.e(TAG, "Photo capture failed: ${exception.message}", exception)
+                                Toast.makeText(this@MainActivity, "Capture failed", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     )
-                    takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI)
-                    startActivityForResult(takePictureIntent, 2)
                 }
-            } else {
-                Toast.makeText(this, "Camera not available", Toast.LENGTH_SHORT).show()
             }
         }
+
 
         val tfliteModel = loadModelFile()
         tflite = Interpreter(tfliteModel)
@@ -150,6 +190,8 @@ class MainActivity : AppCompatActivity() {
                     .into(object : CustomTarget<Bitmap>() {
                         override fun onResourceReady(resource: Bitmap, transition: com.bumptech.glide.request.transition.Transition<in Bitmap>?) {
                             imageView.setImageBitmap(resource)
+                            imageView.visibility = View.VISIBLE
+                            layoutCameraView.visibility = View.GONE
                             val result = recognizeImage(resource)
                             resultTextView.text = result
                             fetchEntityDetails(result)
@@ -166,6 +208,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun startCamera(cameraProvider: ProcessCameraProvider) {
+        val preview = Preview.Builder()
+            .build()
+            .also {
+                it.setSurfaceProvider(previewView.surfaceProvider)
+            }
+
+        imageCapture = ImageCapture.Builder()
+            .build()
+        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+        try {
+            cameraProvider.unbindAll()
+            cameraProvider.bindToLifecycle(
+                this, cameraSelector, preview, imageCapture
+            )
+        } catch (e: Exception) {
+            Log.e("CameraX", "Use case binding failed", e)
+        }
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
@@ -177,6 +240,8 @@ class MainActivity : AppCompatActivity() {
                         val inputStream = contentResolver.openInputStream(it)
                         val bitmap = BitmapFactory.decodeStream(inputStream)
                         imageView.setImageBitmap(bitmap)
+                        imageView.visibility = View.VISIBLE
+                        layoutCameraView.visibility = View.GONE
                         val result = recognizeImage(bitmap)
                         resultTextView.text = result
                         fetchEntityDetails(result)
@@ -266,6 +331,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun shareImageAndText() {
+        if (imageView.drawable == null || resultTextView.text.isEmpty() || detailTextView.text.isEmpty()) {
+            Toast.makeText(this, "Please select an image and ensure details are filled", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         val bitmapDrawable = imageView.drawable as BitmapDrawable
         val bitmap = bitmapDrawable.bitmap
 

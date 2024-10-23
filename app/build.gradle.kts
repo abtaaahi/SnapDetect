@@ -36,6 +36,12 @@ android {
 }
 
 dependencies {
+    implementation(libs.androidx.camera.view)
+    val cameraxVersion = "1.1.0"
+
+    implementation("androidx.camera:camera-core:$cameraxVersion")
+    implementation("androidx.camera:camera-camera2:$cameraxVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
 
     implementation("com.github.bumptech.glide:glide:4.12.0")
 
